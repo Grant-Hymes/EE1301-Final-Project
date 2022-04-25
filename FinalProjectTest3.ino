@@ -25,6 +25,7 @@ int rest = 500; //There will be a 0.5 sec delay between notes
 //Notes in the melody:
 const int melody[10] = {C,A,C,E,C,E,G,G,G,G};
  
+ // Duration for each note in the melody
 const int noteDurations[10] = {eighthNote, eighthNote, quarterNote,
                          eighthNote, eighthNote, quarterNote,
                          quarterNote, eighthNote, quarterNote, lastNote};
@@ -49,71 +50,76 @@ int PIXEL_COUNT = 1;
 int PIXEL_TYPE = WS2811;
 
 // initial settings for state machines
-int testButtonPrevState = LOW; 
+int selfDestructButtonPrevState = LOW; 
 int modeButtonPrevState = LOW;
 
 // assigns pins for the various buttons
 int modeButton = D3;
-int testButton = D2;
+int selfDestructButton = D2;
 
 // initalizes the lightbulb
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(PIXEL_COUNT, PIXEL_PIN, PIXEL_TYPE);
 
 
-int armedDistance;
+int armedDistance; // stores the distance the trap is armed to
 
 
 void setup() {
 
   Serial.begin(9600); // starts serial output
 
-  Wire.begin();
+  Wire.begin(); // allows the lidar to be used
   Wire.setClock(400000); // use 400 kHz I2C
 
+// sets up a timeout for the sensor
   sensor.setTimeout(500);
   if (!sensor.init()) {
       Serial.println("Failed to detect and initialize sensor!");
       while (1);
   }
 
+  // sets the mode of the sensor
   sensor.setDistanceMode(VL53L1X::Long);
   sensor.setMeasurementTimingBudget(50000);
 
-  sensor.startContinuous(50);
+  sensor.startContinuous(50); // starts the reading of the lidar sensor
 
  noTone(speakerPin); //Begin with speaker off
 
   strip.begin(); // starts the lightstrip
-  pinMode(testButton, INPUT_PULLDOWN); // sets up the test button
+  pinMode(selfDestructButton, INPUT_PULLDOWN); // sets up the test button
   pinMode(modeButton, INPUT_PULLDOWN); // sets up the mode button
   Particle.function("DisarmRemotely", remoteDisarm); // creates a cloud function that allows for the trap to be disarmed remotely
 
-    timePrint = millis() + 500;
+    timePrint = millis() + 500; // starts the software timer to periodically print the sensor reading
 
 }
 
 void loop() {
 
-    unsigned long int currentTime = millis();
+  unsigned long int currentTime = millis(); // allows the software timer to use the current time to determine if it is time to print sensor readings
 
-int currentDistance = int(sensor.read());
+  int currentDistance = int(sensor.read()); // creates a variable to store the reading from the snesor
 
-      if(currentTime > timePrint){  
-        Serial.print(currentDistance);
-        if (sensor.timeoutOccurred()) {
-          Serial.print(" TIMEOUT");
-        }
+
+  // prints the reading from the sensor and informs the user if a timeout occured via serial
+  if(currentTime > timePrint){  
+    Serial.print(currentDistance);
+    if (sensor.timeoutOccurred()) {
+      Serial.print(" TIMEOUT");
+      }
       timePrint = timePrint + 500;
       Serial.println();
-      }
+    }
 
+  // changes the button status to their current readings
+  int currentModeButton = digitalRead(modeButton);
+  int currentSelfDestructButton = digitalRead(selfDestructButton);
 
-
-
-
-
-// changes the button status to their current readings
-int currentModeButton = digitalRead(modeButton);
+  // if the user self destructs the device it begins a long enough delay to crash the photon
+  if (selfDestructButtonPrevState == false && currentSelfDestructButton == true) {
+    delay(50000);
+  }
 
 // sets up the various colors the lightbulb can display
 int PixelColorWhite = strip.Color(   255 , 255, 255);
@@ -139,11 +145,13 @@ if (mode == LOOKINGFORBEAM) {
 
 // if the device has found a beam and it is lost mode is switched to searching for beam
 // if the device has found a beam and the mode button is pressed the device is armed
+// the arming procedure works by taking the current reading from the lidar and storing that number
 else if (mode == BEAMFOUND) {
 
   if (currentDistance < 300 || 4000 < currentDistance) {
     mode = LOOKINGFORBEAM;
   }
+
   else if (modeButtonPrevState == false && currentModeButton == true) {
     mode = ARMED;
     armedDistance = currentDistance;
@@ -155,23 +163,27 @@ else if (mode == BEAMFOUND) {
 } 
 
 // if the device is armed and the beam is broken, the trap is sprung
+// the trap works by deciding if the distancing the trap is armed to has varied too much from the current reading
 // the cloud is also notified of this event
 else if (mode == ARMED) {
 
+  // calculates the difference between the armed distance and the current distance
   int distanceDifference = armedDistance - currentDistance;
   if (distanceDifference < 0) {distanceDifference = distanceDifference * (-1);} 
 
+  // if the difference is too big the trap is sprung
   if (100 < distanceDifference) {
 
-    mode = TRIPPED;
-    Particle.publish("INTRUDERALERT");
+  // sets the mode for the trap and informs the cloud of the intrusion
+  mode = TRIPPED;
+  Particle.publish("INTRUDERALERT");
 
   // plays the song
   for(int thisNote = 0; thisNote < 10; thisNote++) {
      tone(speakerPin, melody[thisNote],noteDurations[thisNote]);
      delay(rest);
    }
-  noTone(speakerPin);
+  noTone(speakerPin); // turns the speaker off
 
   }
 
@@ -179,6 +191,7 @@ else if (mode == ARMED) {
 
 // changes the previous button states to the current ones
 modeButtonPrevState = currentModeButton;
+selfDestructButtonPrevState = currentSelfDestructButton;
 
 }
 
